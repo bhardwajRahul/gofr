@@ -28,7 +28,7 @@ type RPCLog struct {
 }
 
 func (l RPCLog) PrettyPrint(writer io.Writer) {
-	/// checking the length of status code to match the spacing that is being done in HTTP logs after status codes
+	// checking the length of status code to match the spacing that is being done in HTTP logs after status codes
 	statusCodeLen := 9 - int(math.Log10(float64(l.StatusCode))) + 1
 
 	fmt.Fprintf(writer, "\u001B[38;5;8m%s \u001B[38;5;%dm%-6d"+
@@ -67,7 +67,7 @@ func LoggingInterceptor(logger Logger) grpc.UnaryServerInterceptor {
 			l := RPCLog{
 				ID:           trace.SpanFromContext(ctx).SpanContext().TraceID().String(),
 				StartTime:    start.Format("2006-01-02T15:04:05.999999999-07:00"),
-				ResponseTime: time.Since(start).Milliseconds(),
+				ResponseTime: time.Since(start).Microseconds(),
 				Method:       info.FullMethod,
 			}
 
@@ -75,6 +75,7 @@ func LoggingInterceptor(logger Logger) grpc.UnaryServerInterceptor {
 				// Check if the error is a gRPC status error
 				if statusErr, ok := status.FromError(err); ok {
 					// You can access the gRPC status code here
+					//nolint:gosec // Conversion from uint32 to int32 is safe in this context because gRPC status codes are within the int32 range
 					l.StatusCode = int32(statusErr.Code())
 				}
 			} else {

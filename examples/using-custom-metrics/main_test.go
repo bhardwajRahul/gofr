@@ -1,22 +1,31 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"gofr.dev/pkg/gofr/testutil"
 )
 
 func TestIntegration(t *testing.T) {
-	const host = "http://localhost:9011"
+	httpPort := testutil.GetFreePort(t)
+	t.Setenv("HTTP_PORT", strconv.Itoa(httpPort))
+	host := fmt.Sprint("http://localhost:", httpPort)
+
+	metricsPort := testutil.GetFreePort(t)
+	t.Setenv("METRICS_PORT", strconv.Itoa(metricsPort))
+
 	go main()
-	time.Sleep(time.Second * 1) // Giving some time to start the server
+	time.Sleep(100 * time.Millisecond) // Giving some time to start the server
 
 	c := http.Client{}
 
-	req, _ := http.NewRequest("POST", host+"/transaction", nil)
+	req, _ := http.NewRequest(http.MethodPost, host+"/transaction", nil)
 	req.Header.Set("content-type", "application/json")
 
 	_, err := c.Do(req)
@@ -24,18 +33,18 @@ func TestIntegration(t *testing.T) {
 		t.Fatalf("request to /transaction failed %v", err)
 	}
 
-	req, _ = http.NewRequest("POST", host+"/return", nil)
+	req, _ = http.NewRequest(http.MethodPost, host+"/return", nil)
 
 	_, err = c.Do(req)
 	if err != nil {
 		t.Fatalf("request to /transaction failed %v", err)
 	}
 
-	req, _ = http.NewRequest("GET", "http://localhost:2120/metrics", nil)
+	req, _ = http.NewRequest(http.MethodGet, fmt.Sprintf("http://localhost:%d/metrics", metricsPort), nil)
 
 	resp, err := c.Do(req)
 	if err != nil {
-		t.Fatalf("request to localhost:2120/metrics failed %v", err)
+		t.Fatalf("request to localhost:%d/metrics failed: %v", metricsPort, err)
 	}
 
 	body, _ := io.ReadAll(resp.Body)

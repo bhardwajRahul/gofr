@@ -44,8 +44,8 @@ func clean(query string) string {
 	return query
 }
 
-func (d *DB) logQuery(start time.Time, queryType, query string, args ...interface{}) {
-	duration := time.Since(start).Milliseconds()
+func (d *DB) sendOperationStats(start time.Time, queryType, query string, args ...interface{}) {
+	duration := time.Since(start).Microseconds()
 
 	d.logger.Debug(&Log{
 		Type:     queryType,
@@ -66,12 +66,12 @@ func getOperationType(query string) string {
 }
 
 func (d *DB) Query(query string, args ...interface{}) (*sql.Rows, error) {
-	defer d.logQuery(time.Now(), "Query", query, args...)
+	defer d.sendOperationStats(time.Now(), "Query", query, args...)
 	return d.DB.Query(query, args...)
 }
 
 func (d *DB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	defer d.logQuery(time.Now(), "QueryContext", query, args...)
+	defer d.sendOperationStats(time.Now(), "QueryContext", query, args...)
 	return d.DB.QueryContext(ctx, query, args...)
 }
 
@@ -80,27 +80,27 @@ func (d *DB) Dialect() string {
 }
 
 func (d *DB) QueryRow(query string, args ...interface{}) *sql.Row {
-	defer d.logQuery(time.Now(), "QueryRow", query, args...)
+	defer d.sendOperationStats(time.Now(), "QueryRow", query, args...)
 	return d.DB.QueryRow(query, args...)
 }
 
 func (d *DB) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
-	defer d.logQuery(time.Now(), "QueryRowContext", query, args...)
+	defer d.sendOperationStats(time.Now(), "QueryRowContext", query, args...)
 	return d.DB.QueryRowContext(ctx, query, args...)
 }
 
 func (d *DB) Exec(query string, args ...interface{}) (sql.Result, error) {
-	defer d.logQuery(time.Now(), "Exec", query, args...)
+	defer d.sendOperationStats(time.Now(), "Exec", query, args...)
 	return d.DB.Exec(query, args...)
 }
 
 func (d *DB) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
-	defer d.logQuery(time.Now(), "ExecContext", query, args...)
+	defer d.sendOperationStats(time.Now(), "ExecContext", query, args...)
 	return d.DB.ExecContext(ctx, query, args...)
 }
 
 func (d *DB) Prepare(query string) (*sql.Stmt, error) {
-	defer d.logQuery(time.Now(), "Prepare", query)
+	defer d.sendOperationStats(time.Now(), "Prepare", query)
 	return d.DB.Prepare(query)
 }
 
@@ -113,6 +113,14 @@ func (d *DB) Begin() (*Tx, error) {
 	return &Tx{Tx: tx, config: d.config, logger: d.logger, metrics: d.metrics}, nil
 }
 
+func (d *DB) Close() error {
+	if d.DB != nil {
+		return d.DB.Close()
+	}
+
+	return nil
+}
+
 type Tx struct {
 	*sql.Tx
 	config  *DBConfig
@@ -120,8 +128,8 @@ type Tx struct {
 	metrics Metrics
 }
 
-func (t *Tx) logQuery(start time.Time, queryType, query string, args ...interface{}) {
-	duration := time.Since(start).Milliseconds()
+func (t *Tx) sendOperationStats(start time.Time, queryType, query string, args ...interface{}) {
+	duration := time.Since(start).Microseconds()
 
 	t.logger.Debug(&Log{
 		Type:     queryType,
@@ -135,42 +143,42 @@ func (t *Tx) logQuery(start time.Time, queryType, query string, args ...interfac
 }
 
 func (t *Tx) Query(query string, args ...interface{}) (*sql.Rows, error) {
-	defer t.logQuery(time.Now(), "TxQuery", query, args...)
+	defer t.sendOperationStats(time.Now(), "TxQuery", query, args...)
 	return t.Tx.Query(query, args...)
 }
 
 func (t *Tx) QueryRow(query string, args ...interface{}) *sql.Row {
-	defer t.logQuery(time.Now(), "TxQueryRow", query, args...)
+	defer t.sendOperationStats(time.Now(), "TxQueryRow", query, args...)
 	return t.Tx.QueryRow(query, args...)
 }
 
 func (t *Tx) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
-	defer t.logQuery(time.Now(), "TxQueryRowContext", query, args...)
+	defer t.sendOperationStats(time.Now(), "TxQueryRowContext", query, args...)
 	return t.Tx.QueryRowContext(ctx, query, args...)
 }
 
 func (t *Tx) Exec(query string, args ...interface{}) (sql.Result, error) {
-	defer t.logQuery(time.Now(), "TxExec", query, args...)
+	defer t.sendOperationStats(time.Now(), "TxExec", query, args...)
 	return t.Tx.Exec(query, args...)
 }
 
 func (t *Tx) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
-	defer t.logQuery(time.Now(), "TxExecContext", query, args...)
+	defer t.sendOperationStats(time.Now(), "TxExecContext", query, args...)
 	return t.Tx.ExecContext(ctx, query, args...)
 }
 
 func (t *Tx) Prepare(query string) (*sql.Stmt, error) {
-	defer t.logQuery(time.Now(), "TxPrepare", query)
+	defer t.sendOperationStats(time.Now(), "TxPrepare", query)
 	return t.Tx.Prepare(query)
 }
 
 func (t *Tx) Commit() error {
-	defer t.logQuery(time.Now(), "TxCommit", "COMMIT")
+	defer t.sendOperationStats(time.Now(), "TxCommit", "COMMIT")
 	return t.Tx.Commit()
 }
 
 func (t *Tx) Rollback() error {
-	defer t.logQuery(time.Now(), "TxRollback", "ROLLBACK")
+	defer t.sendOperationStats(time.Now(), "TxRollback", "ROLLBACK")
 	return t.Tx.Rollback()
 }
 
@@ -213,7 +221,6 @@ func (d *DB) Select(ctx context.Context, data interface{}, query string, args ..
 	rvo := reflect.ValueOf(data)
 	if rvo.Kind() != reflect.Ptr {
 		d.logger.Error("we did not get a pointer. data is not settable.")
-
 		return
 	}
 
@@ -223,41 +230,63 @@ func (d *DB) Select(ctx context.Context, data interface{}, query string, args ..
 
 	switch rv.Kind() {
 	case reflect.Slice:
-		rows, err := d.QueryContext(ctx, query, args...)
-		if err != nil {
-			d.logger.Errorf("error running query: %v", err)
-
-			return
-		}
-
-		for rows.Next() {
-			val := reflect.New(rv.Type().Elem())
-
-			if rv.Type().Elem().Kind() == reflect.Struct {
-				d.rowsToStruct(rows, val)
-			} else {
-				_ = rows.Scan(val.Interface())
-			}
-
-			rv = reflect.Append(rv, val.Elem())
-		}
-
-		if rvo.Elem().CanSet() {
-			rvo.Elem().Set(rv)
-		}
+		d.selectSlice(ctx, query, args, rvo, rv)
 
 	case reflect.Struct:
-		rows, _ := d.QueryContext(ctx, query, args...)
-		for rows.Next() {
-			d.rowsToStruct(rows, rv)
-		}
+		d.selectStruct(ctx, query, args, rv)
 
 	default:
 		d.logger.Debugf("a pointer to %v was not expected.", rv.Kind().String())
 	}
 }
 
-func (d *DB) rowsToStruct(rows *sql.Rows, vo reflect.Value) {
+func (d *DB) selectSlice(ctx context.Context, query string, args []interface{}, rvo, rv reflect.Value) {
+	rows, err := d.QueryContext(ctx, query, args...)
+	if err != nil {
+		d.logger.Errorf("error running query: %v", err)
+		return
+	}
+
+	for rows.Next() {
+		val := reflect.New(rv.Type().Elem())
+
+		if rv.Type().Elem().Kind() == reflect.Struct {
+			d.rowsToStruct(rows, val)
+		} else {
+			_ = rows.Scan(val.Interface())
+		}
+
+		rv = reflect.Append(rv, val.Elem())
+	}
+
+	if rows.Err() != nil {
+		d.logger.Errorf("error parsing rows : %v", err)
+		return
+	}
+
+	if rvo.Elem().CanSet() {
+		rvo.Elem().Set(rv)
+	}
+}
+
+func (d *DB) selectStruct(ctx context.Context, query string, args []interface{}, rv reflect.Value) {
+	rows, err := d.QueryContext(ctx, query, args...)
+	if err != nil {
+		d.logger.Errorf("error running query: %v", err)
+		return
+	}
+
+	for rows.Next() {
+		d.rowsToStruct(rows, rv)
+	}
+
+	if rows.Err() != nil {
+		d.logger.Errorf("error parsing rows : %v", err)
+		return
+	}
+}
+
+func (*DB) rowsToStruct(rows *sql.Rows, vo reflect.Value) {
 	v := vo
 	if vo.Kind() == reflect.Ptr {
 		v = vo.Elem()

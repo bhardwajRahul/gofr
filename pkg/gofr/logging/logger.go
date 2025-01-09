@@ -135,12 +135,14 @@ func (l *logger) Errorf(format string, args ...interface{}) {
 func (l *logger) Fatal(args ...interface{}) {
 	l.logf(FATAL, "", args...)
 
-	// exit status is 1 as it denotes failure as signified by Fatal log
+	//nolint:revive // exit status is 1 as it denotes failure as signified by Fatal log
 	os.Exit(1)
 }
 
 func (l *logger) Fatalf(format string, args ...interface{}) {
 	l.logf(FATAL, format, args...)
+
+	//nolint:revive // exit status is 1 as it denotes failure as signified by Fatal log
 	os.Exit(1)
 }
 
@@ -216,4 +218,22 @@ func checkIfTerminal(w io.Writer) bool {
 
 func (l *logger) ChangeLevel(level Level) {
 	l.level = level
+}
+
+// LogLevelResponder is an interface that provides a method to get the log level.
+type LogLevelResponder interface {
+	LogLevel() Level
+}
+
+// GetLogLevelForError returns the log level for the given error.
+// If the error implements [logLevelResponder], its log level is returned.
+// Otherwise, the default log level "error" is returned.
+func GetLogLevelForError(err error) Level {
+	level := ERROR
+
+	if e, ok := err.(LogLevelResponder); ok {
+		level = e.LogLevel()
+	}
+
+	return level
 }

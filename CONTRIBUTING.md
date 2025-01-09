@@ -9,6 +9,7 @@
   No PR should ever decrease the overall code coverage.
 * Once your code changes are done along with the testcases, submit a PR to development branch. Please note that all PRs
   are merged from feature branches to development first.
+* PR should be raised only when development is complete and the code is ready for review. This approach helps reduce the number of open pull requests and facilitates a more efficient review process for the team.
 * All PRs need to be reviewed by at least 2 GoFr developers. They might reach out to you for any clarification.
 * Thank you for your contribution. :)
 
@@ -51,9 +52,17 @@ func TestFunctionName(t *testing.T) {
 ```go
 Some services will be required to pass the entire test suite. We recommend using docker for running those services.
 
+docker run --name mongodb -d -p 27017:27017 -e MONGO_INITDB_ROOT_USERNAME=user -e MONGO_INITDB_ROOT_PASSWORD=password mongodb/mongodb-community-server:latest
+docker run -d -p 21:21 -p 21000-21010:21000-21010 -e USERS='user|password' delfer/alpine-ftp-server
+// the docker image is relatively unstable. Alternatively, refer to official guide of OpenTSDB to locally setup OpenTSDB env.
+// http://opentsdb.net/docs/build/html/installation.html#id1
+docker run -d --name gofr-opentsdb -p 4242:4242 petergrace/opentsdb-docker:latest
 docker run --name gofr-mysql -e MYSQL_ROOT_PASSWORD=password -e MYSQL_DATABASE=test -p 2001:3306 -d mysql:8.0.30
 docker run --name gofr-redis -p 2002:6379 -d redis:7.0.5
+docker run --name gofr-solr -p 2020:8983 solr -DzkRun
 docker run --name gofr-zipkin -d -p 2005:9411 openzipkin/zipkin:2
+docker run --rm -it -p 4566:4566 -p 4510-4559:4510-4559 localstack/localstack
+docker run --name cassandra-node -d -p 9042:9042 -v cassandra_data:/var/lib/cassandra cassandra:latest
 docker run --name gofr-pgsql -d -e POSTGRES_DB=customers -e POSTGRES_PASSWORD=root123 -p 2006:5432 postgres:15.1
 docker run --name gofr-mssql -d -e 'ACCEPT_EULA=Y' -e 'SA_PASSWORD=reallyStrongPwd123' -p 2007:1433 mcr.microsoft.com/azure-sql-edge
 docker run --name kafka-1 -p 9092:9092 \
@@ -82,7 +91,7 @@ Please note that the recommended local port for the services are different than 
   DB, Logger etc.
 * No magic. So, no init. In a large project, it becomes difficult to track which package is doing what at the
   initialization step.
-* Exported functions must have an associated goDoc.
+* Exported functions must have an associated godoc.
 * Sensitive data(username, password, keys) should not be pushed. Always use environment variables.
 * Take interfaces and return concrete types.
     - Lean interfaces - take 'exactly' what you need, not more. Onus of interface definition is on the package who is

@@ -2,21 +2,30 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
 	grpcExample "gofr.dev/examples/grpc-server/grpc"
+	"gofr.dev/pkg/gofr/testutil"
 )
 
 func TestGRPCServer(t *testing.T) {
-	const host = "localhost:10000"
+	gRPCPort := testutil.GetFreePort(t)
+	t.Setenv("GRPC_PORT", strconv.Itoa(gRPCPort))
+	host := fmt.Sprint("localhost:", gRPCPort)
+
+	port := testutil.GetFreePort(t)
+	t.Setenv("METRICS_PORT", strconv.Itoa(port))
 
 	go main()
-	time.Sleep(time.Second * 1)
+	time.Sleep(100 * time.Millisecond)
 
 	client, conn := createGRPCClient(t, host)
 	defer conn.Close()
@@ -37,21 +46,20 @@ func TestGRPCServer(t *testing.T) {
 
 	for _, tc := range tests {
 		resp, err := client.SayHello(context.Background(), tc.request)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.Equal(t, tc.responseMessage, resp.Message)
 	}
 
 	// case of empty request
 	resp, err := client.SayHello(context.Background(), nil)
 	assert.Equal(t, "Hello World!", resp.Message)
-	assert.Nil(t, err)
+	require.NoError(t, err)
 
 	// Test context cancellation
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err = client.SayHello(ctx, &grpcExample.HelloRequest{Name: "Test"})
-	assert.Equal(t, err.Error(), "rpc error: code = Canceled desc = context canceled")
-
+	assert.Equal(t, "rpc error: code = Canceled desc = context canceled", err.Error())
 }
 
 func createGRPCClient(t *testing.T, host string) (grpcExample.HelloClient, *grpc.ClientConn) {

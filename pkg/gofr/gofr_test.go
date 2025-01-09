@@ -2,6 +2,7 @@ package gofr
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"gofr.dev/pkg/gofr/config"
 	"gofr.dev/pkg/gofr/container"
@@ -43,7 +45,43 @@ func TestGofr_readConfig(t *testing.T) {
 	}
 }
 
+func TestGoFr_isPortAvailable(t *testing.T) {
+	port := testutil.GetFreePort(t)
+	metricsPort := testutil.GetFreePort(t)
+
+	tests := []struct {
+		name        string
+		isAvailable bool
+	}{
+		{"Port is available", true},
+		{"Port is not available", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !tt.isAvailable {
+				t.Setenv("HTTP_PORT", strconv.Itoa(port))
+				t.Setenv("METRICS_PORT", strconv.Itoa(metricsPort))
+
+				g := New()
+
+				go g.Run()
+				time.Sleep(100 * time.Millisecond)
+			}
+
+			isAvailable := isPortAvailable(port)
+			require.Equal(t, tt.isAvailable, isAvailable)
+		})
+	}
+}
+
 func TestGofr_ServerRoutes(t *testing.T) {
+	port := testutil.GetFreePort(t)
+	metricsPort := testutil.GetFreePort(t)
+
+	t.Setenv("HTTP_PORT", strconv.Itoa(port))
+	t.Setenv("METRICS_PORT", strconv.Itoa(metricsPort))
+
 	type response struct {
 		Data interface{} `json:"data"`
 	}
@@ -118,6 +156,12 @@ func TestGofr_ServerRoutes(t *testing.T) {
 }
 
 func TestGofr_ServerRun(t *testing.T) {
+	port := testutil.GetFreePort(t)
+	metricsPort := testutil.GetFreePort(t)
+
+	t.Setenv("HTTP_PORT", strconv.Itoa(port))
+	t.Setenv("METRICS_PORT", strconv.Itoa(metricsPort))
+
 	g := New()
 
 	g.GET("/hello", func(*Context) (interface{}, error) {
@@ -125,24 +169,30 @@ func TestGofr_ServerRun(t *testing.T) {
 	})
 
 	go g.Run()
-	time.Sleep(1 * time.Second)
+	time.Sleep(100 * time.Millisecond)
 
 	var netClient = &http.Client{
-		Timeout: time.Second * 10,
+		Timeout: 200 * time.Millisecond,
 	}
 
 	re, _ := http.NewRequestWithContext(context.Background(), http.MethodGet,
-		"http://localhost:"+strconv.Itoa(defaultHTTPPort)+"/hello", http.NoBody)
+		"http://localhost:"+fmt.Sprint(port)+"/hello", http.NoBody)
 	resp, err := netClient.Do(re)
 
-	assert.NoError(t, err, "TEST Failed.\n")
+	require.NoError(t, err, "TEST Failed.\n")
 
-	assert.Equal(t, resp.StatusCode, http.StatusOK, "TEST Failed.\n")
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "TEST Failed.\n")
 
 	resp.Body.Close()
 }
 
 func Test_AddHTTPService(t *testing.T) {
+	port := testutil.GetFreePort(t)
+	metricsPort := testutil.GetFreePort(t)
+
+	t.Setenv("HTTP_PORT", strconv.Itoa(port))
+	t.Setenv("METRICS_PORT", strconv.Itoa(metricsPort))
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/test", r.URL.Path)
 
@@ -165,6 +215,9 @@ func Test_AddDuplicateHTTPService(t *testing.T) {
 	t.Setenv("LOG_LEVEL", "DEBUG")
 
 	logs := testutil.StdoutOutputForFunc(func() {
+		metricsPort := testutil.GetFreePort(t)
+		t.Setenv("METRICS_PORT", strconv.Itoa(metricsPort))
+
 		a := New()
 
 		a.AddHTTPService("test-service", "http://localhost")
@@ -175,12 +228,18 @@ func Test_AddDuplicateHTTPService(t *testing.T) {
 }
 
 func TestApp_Metrics(t *testing.T) {
+	metricsPort := testutil.GetFreePort(t)
+	t.Setenv("METRICS_PORT", strconv.Itoa(metricsPort))
+
 	app := New()
 
 	assert.NotNil(t, app.Metrics())
 }
 
 func TestApp_AddAndGetHTTPService(t *testing.T) {
+	metricsPort := testutil.GetFreePort(t)
+	t.Setenv("METRICS_PORT", strconv.Itoa(metricsPort))
+
 	app := New()
 
 	app.AddHTTPService("test-service", "http://test")
@@ -192,6 +251,9 @@ func TestApp_AddAndGetHTTPService(t *testing.T) {
 
 func TestApp_MigrateInvalidKeys(t *testing.T) {
 	logs := testutil.StderrOutputForFunc(func() {
+		metricsPort := testutil.GetFreePort(t)
+		t.Setenv("METRICS_PORT", strconv.Itoa(metricsPort))
+
 		app := New()
 		app.Migrate(map[int64]migration.Migrate{1: {}})
 	})
@@ -201,6 +263,9 @@ func TestApp_MigrateInvalidKeys(t *testing.T) {
 
 func TestApp_MigratePanicRecovery(t *testing.T) {
 	logs := testutil.StderrOutputForFunc(func() {
+		metricsPort := testutil.GetFreePort(t)
+		t.Setenv("METRICS_PORT", strconv.Itoa(metricsPort))
+
 		app := New()
 
 		app.container.PubSub = &container.MockPubSub{}
@@ -250,6 +315,8 @@ func Test_addRoute(t *testing.T) {
 }
 
 func TestEnableBasicAuthWithFunc(t *testing.T) {
+	port := testutil.GetFreePort(t)
+
 	jwksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -260,6 +327,7 @@ func TestEnableBasicAuthWithFunc(t *testing.T) {
 	a := &App{
 		httpServer: &httpServer{
 			router: gofrHTTP.NewRouter(),
+			port:   port,
 		},
 		container: c,
 	}
@@ -294,7 +362,172 @@ func TestEnableBasicAuthWithFunc(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "TestEnableBasicAuthWithFunc Failed!")
 }
 
+func encodeBasicAuthorization(t *testing.T, arg string) string {
+	t.Helper()
+
+	data := []byte(arg)
+
+	dst := make([]byte, base64.StdEncoding.EncodedLen(len(data)))
+
+	base64.StdEncoding.Encode(dst, data)
+
+	s := "Basic " + string(dst)
+
+	return s
+}
+
+func Test_EnableBasicAuth(t *testing.T) {
+	port := testutil.GetFreePort(t)
+
+	mockContainer, _ := container.NewMockContainer(t)
+
+	tests := []struct {
+		name               string
+		args               []string
+		passedCredentials  string
+		expectedStatusCode int
+	}{
+		{
+			"No Authorization header passed",
+			[]string{"user1", "password1", "user2", "password2"},
+			"",
+			http.StatusUnauthorized,
+		},
+		{
+			"Even number of arguments",
+			[]string{"user1", "password1", "user2", "password2"},
+			"user1:password1",
+			http.StatusOK,
+		},
+		{
+			"Odd number of arguments with no authorization header passed",
+			[]string{"user1", "password1", "user2"},
+			"",
+			http.StatusOK,
+		},
+		{
+			"Odd number of arguments with wrong authorization header passed",
+			[]string{"user1", "password1", "user2"},
+			"user1:password2",
+			http.StatusOK,
+		},
+	}
+
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Initialize a new App instance
+			a := &App{
+				httpServer: &httpServer{
+					router: gofrHTTP.NewRouter(),
+					port:   port,
+				},
+				container: mockContainer,
+			}
+
+			a.httpServer.router.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				fmt.Fprintln(w, "Hello, world!")
+			}))
+
+			a.EnableBasicAuth(tt.args...)
+
+			server := httptest.NewServer(a.httpServer.router)
+			defer server.Close()
+
+			client := server.Client()
+
+			// Create a mock HTTP request
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, http.NoBody)
+			require.NoError(t, err)
+
+			// Add a basic authorization header
+			req.Header.Add("Authorization", encodeBasicAuthorization(t, tt.passedCredentials))
+
+			// Send the HTTP request
+			resp, err := client.Do(req)
+			require.NoError(t, err)
+
+			defer resp.Body.Close()
+
+			assert.Equal(t, tt.expectedStatusCode, resp.StatusCode, "TEST[%d], Failed.\n%s", i, tt.name)
+		})
+	}
+}
+
+func Test_EnableBasicAuthWithValidator(t *testing.T) {
+	port := testutil.GetFreePort(t)
+
+	mockContainer, _ := container.NewMockContainer(t)
+
+	tests := []struct {
+		name               string
+		passedCredentials  string
+		expectedStatusCode int
+	}{
+		{
+			"No Authorization header passed",
+			"",
+			http.StatusUnauthorized,
+		},
+		{
+			"Correct Authorization",
+			"user:password",
+			http.StatusOK,
+		},
+		{
+			"Wrong Authorization header passed",
+			"user2:password2",
+			http.StatusUnauthorized,
+		},
+	}
+
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Initialize a new App instance
+			a := &App{
+				httpServer: &httpServer{
+					router: gofrHTTP.NewRouter(),
+					port:   port,
+				},
+				container: mockContainer,
+			}
+
+			validateFunc := func(_ *container.Container, username string, password string) bool {
+				return username == "user" && password == "password"
+			}
+
+			a.EnableBasicAuthWithValidator(validateFunc)
+
+			a.httpServer.router.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				fmt.Fprintln(w, "Hello, world!")
+			}))
+
+			server := httptest.NewServer(a.httpServer.router)
+			defer server.Close()
+
+			client := server.Client()
+
+			// Create a mock HTTP request
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, http.NoBody)
+			require.NoError(t, err)
+
+			// Add a basic authorization header
+			req.Header.Add("Authorization", encodeBasicAuthorization(t, tt.passedCredentials))
+
+			// Send the HTTP request
+			resp, err := client.Do(req)
+			require.NoError(t, err)
+
+			defer resp.Body.Close()
+
+			assert.Equal(t, tt.expectedStatusCode, resp.StatusCode, "TEST[%d], Failed.\n%s", i, tt.name)
+		})
+	}
+}
+
 func Test_AddRESTHandlers(t *testing.T) {
+	metricsPort := testutil.GetFreePort(t)
+	t.Setenv("METRICS_PORT", strconv.Itoa(metricsPort))
+
 	app := New()
 
 	type user struct {
@@ -311,6 +544,8 @@ func Test_AddRESTHandlers(t *testing.T) {
 	}{
 		{"success case", &user{}, nil},
 		{"invalid object", &invalidObject, errInvalidObject},
+		{"invalid object", user{}, fmt.Errorf("failed to register routes for 'user' struct, %w", errNonPointerObject)},
+		{"invalid object", nil, errObjectIsNil},
 	}
 
 	for i, tc := range tests {
@@ -321,33 +556,43 @@ func Test_AddRESTHandlers(t *testing.T) {
 }
 
 func Test_initTracer(t *testing.T) {
-	mockConfig1 := config.NewMockConfig(map[string]string{
-		"TRACE_EXPORTER": "zipkin",
-		"TRACER_HOST":    "localhost",
-		"TRACER_PORT":    "2005",
-	})
+	createMockConfig := func(traceExporter, url, authKey string) config.Config {
+		return config.NewMockConfig(map[string]string{
+			"TRACE_EXPORTER":  traceExporter,
+			"TRACER_URL":      url,
+			"TRACER_AUTH_KEY": authKey,
+		})
+	}
+	mockConfig1 := createMockConfig("zipkin", "http://localhost:2005/api/v2/spans", "")
 
-	mockConfig2 := config.NewMockConfig(map[string]string{
-		"TRACE_EXPORTER": "jaeger",
-		"TRACER_HOST":    "localhost",
-		"TRACER_PORT":    "2005",
-	})
+	mockConfig2 := createMockConfig("zipkin", "http://localhost:2005/api/v2/spans", "valid-token")
 
-	mockConfig3 := config.NewMockConfig(map[string]string{
-		"TRACE_EXPORTER": "gofr",
-	})
+	mockConfig3 := createMockConfig("jaeger", "localhost:4317", "")
+
+	mockConfig4 := createMockConfig("jaeger", "localhost:4317", "valid-token")
+
+	mockConfig5 := createMockConfig("otlp", "localhost:4317", "")
+
+	mockConfig6 := createMockConfig("otlp", "localhost:4317", "valid-token")
+
+	mockConfig7 := createMockConfig("gofr", "", "")
 
 	tests := []struct {
 		desc               string
 		config             config.Config
 		expectedLogMessage string
 	}{
-		{"zipkin exporter", mockConfig1, "Exporting traces to zipkin."},
-		{"jaeger exporter", mockConfig2, "Exporting traces to jaeger."},
-		{"gofr exporter", mockConfig3, "Exporting traces to GoFr at https://tracer.gofr.dev"},
+		{"tracing disabled", config.NewMockConfig(nil), "tracing is disabled"},
+		{"zipkin exporter", mockConfig1, "Exporting traces to zipkin at http://localhost:2005/api/v2/spans"},
+		{"zipkin exporter with authkey", mockConfig2, "Exporting traces to zipkin at http://localhost:2005/api/v2/spans"},
+		{"jaeger exporter", mockConfig3, "Exporting traces to jaeger at localhost:4317"},
+		{"jaeger exporter with auth", mockConfig4, "Exporting traces to jaeger at localhost:4317"},
+		{"otlp exporter", mockConfig5, "Exporting traces to otlp at localhost:4317"},
+		{"otlp exporter with authKey", mockConfig6, "Exporting traces to otlp at localhost:4317"},
+		{"gofr exporter with default url", mockConfig7, "Exporting traces to GoFr at https://tracer.gofr.dev"},
 	}
 
-	for _, tc := range tests {
+	for i, tc := range tests {
 		logMessage := testutil.StdoutOutputForFunc(func() {
 			mockContainer, _ := container.NewMockContainer(t)
 
@@ -355,36 +600,53 @@ func Test_initTracer(t *testing.T) {
 				Config:    tc.config,
 				container: mockContainer,
 			}
-
 			a.initTracer()
 		})
-
-		assert.Contains(t, logMessage, tc.expectedLogMessage)
+		assert.Contains(t, logMessage, tc.expectedLogMessage, "TEST[%d], Failed.\n%s", i, tc.desc)
 	}
 }
 
 func Test_initTracer_invalidConfig(t *testing.T) {
-	mockConfig := config.NewMockConfig(map[string]string{
-		"TRACE_EXPORTER": "abc",
-		"TRACER_HOST":    "localhost",
-		"TRACER_PORT":    "2005",
-	})
+	createMockConfig := func(traceExporter, url, authKey string) config.Config {
+		return config.NewMockConfig(map[string]string{
+			"TRACE_EXPORTER":  traceExporter,
+			"TRACER_URL":      url,
+			"TRACER_AUTH_KEY": authKey,
+		})
+	}
+	mockConfig1 := createMockConfig("abc", "https://tracer-service.dev", "")
+	mockConfig2 := createMockConfig("", "https://tracer-service.dev", "")
+	mockConfig3 := createMockConfig("otlp", "", "")
 
-	errLogMessage := testutil.StderrOutputForFunc(func() {
-		mockContainer, _ := container.NewMockContainer(t)
+	testErr := []struct {
+		desc               string
+		config             config.Config
+		expectedLogMessage string
+	}{
+		{"unsupported trace_exporter", mockConfig1, "unsupported TRACE_EXPORTER: abc"},
+		{"missing trace_exporter", mockConfig2, "missing TRACE_EXPORTER config, should be provided with TRACER_URL to enable tracing"},
+		{"miss tracer_url ", mockConfig3,
+			"missing TRACER_URL config, should be provided with TRACE_EXPORTER to enable tracing"},
+	}
 
-		a := App{
-			Config:    mockConfig,
-			container: mockContainer,
-		}
+	for i, tc := range testErr {
+		logMessage := testutil.StderrOutputForFunc(func() {
+			mockContainer, _ := container.NewMockContainer(t)
 
-		a.initTracer()
-	})
+			a := App{
+				Config:    tc.config,
+				container: mockContainer,
+			}
+			a.initTracer()
+		})
 
-	assert.Contains(t, errLogMessage, "unsupported trace exporter.")
+		assert.Contains(t, logMessage, tc.expectedLogMessage, "TEST[%d], Failed.\n%s", i, tc.desc)
+	}
 }
 
 func Test_UseMiddleware(t *testing.T) {
+	port := testutil.GetFreePort(t)
+
 	testMiddleware := func(inner http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Test-Middleware", "applied")
@@ -397,7 +659,7 @@ func Test_UseMiddleware(t *testing.T) {
 	app := &App{
 		httpServer: &httpServer{
 			router: gofrHTTP.NewRouter(),
-			port:   8001,
+			port:   port,
 		},
 		container: c,
 		Config:    config.NewMockConfig(map[string]string{"REQUEST_TIMEOUT": "5"}),
@@ -410,14 +672,14 @@ func Test_UseMiddleware(t *testing.T) {
 	})
 
 	go app.Run()
-	time.Sleep(1 * time.Second)
+	time.Sleep(100 * time.Millisecond)
 
 	var netClient = &http.Client{
-		Timeout: time.Second * 10,
+		Timeout: 200 * time.Millisecond,
 	}
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet,
-		"http://localhost:8001"+"/test", http.NoBody)
+		fmt.Sprintf("http://localhost:%d", port)+"/test", http.NoBody)
 
 	resp, err := netClient.Do(req)
 	if err != nil {
@@ -434,13 +696,68 @@ func Test_UseMiddleware(t *testing.T) {
 	assert.Equal(t, "applied", testHeaderValue, "Test_UseMiddleware Failed! header value mismatch.")
 }
 
+// Test the UseMiddlewareWithContainer function.
+func TestUseMiddlewareWithContainer(t *testing.T) {
+	port := testutil.GetFreePort(t)
+
+	// Initialize the mock container
+	mockContainer := container.NewContainer(config.NewMockConfig(nil))
+
+	// Create a simple handler to test middleware functionality
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("Hello, world!"))
+	})
+
+	// Middleware to modify response and test container access
+	middleware := func(c *container.Container, handler http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Ensure the container is passed correctly (for this test, we are just logging)
+			assert.NotNil(t, c, "Container should not be nil in the middleware")
+
+			// Continue with the handler execution
+			handler.ServeHTTP(w, r)
+		})
+	}
+
+	// Create a new App with a mock server
+	app := &App{
+		httpServer: &httpServer{
+			router: gofrHTTP.NewRouter(),
+			port:   port,
+		},
+		container: mockContainer,
+		Config:    config.NewMockConfig(map[string]string{"REQUEST_TIMEOUT": "5"}),
+	}
+
+	// Use the middleware with the container
+	app.UseMiddlewareWithContainer(middleware)
+
+	// Register the handler to a route for testing
+	app.httpServer.router.Handle("/test", handler)
+
+	// Create a test request
+	req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
+	// Create a test response recorder
+	rr := httptest.NewRecorder()
+
+	// Call the handler with the request and recorder
+	app.httpServer.router.ServeHTTP(rr, req)
+
+	// Assert the status code and response body
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Equal(t, "Hello, world!", rr.Body.String())
+}
+
 func Test_APIKeyAuthMiddleware(t *testing.T) {
+	port := testutil.GetFreePort(t)
+
 	c, _ := container.NewMockContainer(t)
 
 	app := &App{
 		httpServer: &httpServer{
 			router: gofrHTTP.NewRouter(),
-			port:   8001,
+			port:   port,
 		},
 		container: c,
 		Config:    config.NewMockConfig(map[string]string{"REQUEST_TIMEOUT": "5"}),
@@ -460,14 +777,14 @@ func Test_APIKeyAuthMiddleware(t *testing.T) {
 	})
 
 	go app.Run()
-	time.Sleep(1 * time.Second)
+	time.Sleep(100 * time.Millisecond)
 
 	var netClient = &http.Client{
-		Timeout: time.Second * 10,
+		Timeout: 200 * time.Millisecond,
 	}
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet,
-		"http://localhost:8001/test", http.NoBody)
+		fmt.Sprintf("http://localhost:%d", port)+"/test", http.NoBody)
 	req.Header.Set("X-API-Key", "test-key")
 
 	// Send the request and check for successful response
@@ -483,6 +800,11 @@ func Test_APIKeyAuthMiddleware(t *testing.T) {
 }
 
 func Test_SwaggerEndpoints(t *testing.T) {
+	port := testutil.GetFreePort(t)
+
+	metricsPort := testutil.GetFreePort(t)
+	t.Setenv("METRICS_PORT", strconv.Itoa(metricsPort))
+
 	// Create the openapi.json file within the static directory
 	openAPIFilePath := filepath.Join("static", OpenAPIJSON)
 
@@ -501,17 +823,17 @@ func Test_SwaggerEndpoints(t *testing.T) {
 
 	app := New()
 	app.httpRegistered = true
-	app.httpServer.port = 8002
+	app.httpServer.port = port
 
 	go app.Run()
-	time.Sleep(1 * time.Second)
+	time.Sleep(100 * time.Millisecond)
 
 	var netClient = &http.Client{
-		Timeout: time.Second * 5,
+		Timeout: 200 * time.Millisecond,
 	}
 
 	re, _ := http.NewRequestWithContext(context.Background(), http.MethodGet,
-		"http://localhost:8002"+"/.well-known/swagger", http.NoBody)
+		fmt.Sprintf("http://localhost:%d", port)+"/.well-known/swagger", http.NoBody)
 	resp, err := netClient.Do(re)
 
 	defer func() {
@@ -521,7 +843,7 @@ func Test_SwaggerEndpoints(t *testing.T) {
 		}
 	}()
 
-	assert.Nil(t, err, "Expected error to be nil, got : %v", err)
+	require.NoError(t, err, "Expected error to be nil, got : %v", err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, "text/html; charset=utf-8", resp.Header.Get("Content-Type"))
 }
@@ -550,7 +872,7 @@ func Test_AddCronJob_Success(t *testing.T) {
 		ctx.Logger.Info("test-job-success")
 	})
 
-	assert.Equal(t, len(a.cron.jobs), 1)
+	assert.Len(t, a.cron.jobs, 1)
 
 	for _, j := range a.cron.jobs {
 		if j.name == "test-job" {
@@ -562,31 +884,43 @@ func Test_AddCronJob_Success(t *testing.T) {
 	assert.Truef(t, pass, "unable to add cron job to cron table")
 }
 
-func TestStaticHandler(t *testing.T) {
-	const indexHTML = "indexTest.html"
+func setupTestEnvironment(t *testing.T) (host string, htmlContent []byte) {
+	t.Helper()
+
+	port := testutil.GetFreePort(t)
+	metricsPort := testutil.GetFreePort(t)
+
+	t.Setenv("METRICS_PORT", strconv.Itoa(metricsPort))
 
 	// Generating some files for testing
-	htmlContent := []byte("<html><head><title>Test Static File</title></head><body><p>Testing Static File</p></body></html>")
+	htmlContent = []byte("<html><head><title>Test Static File</title></head><body><p>Testing Static File</p></body></html>")
 
 	createPublicDirectory(t, defaultPublicStaticDir, htmlContent)
 
-	defer os.Remove("static/indexTest.html")
-
 	createPublicDirectory(t, "testdir", htmlContent)
-
-	defer os.RemoveAll("testdir")
 
 	app := New()
 
-	app.AddStaticFiles("gofrTest", "./testdir")
+	app.AddStaticFiles("gofrTest", "testdir")
 
 	app.httpRegistered = true
-	app.httpServer.port = 8022
+	app.httpServer.port = port
 
 	go app.Run()
-	time.Sleep(1 * time.Second)
+	time.Sleep(100 * time.Millisecond)
 
-	host := "http://localhost:8022"
+	host = fmt.Sprintf("http://localhost:%d", port)
+
+	return host, htmlContent
+}
+
+func TestStaticHandler(t *testing.T) {
+	const indexHTML = "indexTest.html"
+
+	host, htmlContent := setupTestEnvironment(t)
+
+	defer os.Remove("static/indexTest.html")
+	defer os.RemoveAll("testdir")
 
 	tests := []struct {
 		desc                       string
@@ -639,7 +973,7 @@ func TestStaticHandler(t *testing.T) {
 
 		body := string(bodyBytes)
 
-		assert.NoError(t, err, "TEST[%d], Failed.\n%s", i, tc.desc)
+		require.NoError(t, err, "TEST[%d], Failed.\n%s", i, tc.desc)
 		assert.Equal(t, tc.statusCode, resp.StatusCode, "TEST[%d], Failed with Status Body.\n%s", i, tc.desc)
 
 		if tc.expectedBody != "" {
@@ -665,6 +999,9 @@ func TestStaticHandler(t *testing.T) {
 func TestStaticHandlerInvalidFilePath(t *testing.T) {
 	// Generating some files for testing
 	logs := testutil.StderrOutputForFunc(func() {
+		metricsPort := testutil.GetFreePort(t)
+		t.Setenv("METRICS_PORT", strconv.Itoa(metricsPort))
+
 		app := New()
 
 		app.AddStaticFiles("gofrTest", ".//,.!@#$%^&")
@@ -698,4 +1035,108 @@ func createPublicDirectory(t *testing.T, defaultPublicStaticDir string, htmlCont
 	}
 
 	file.Close()
+}
+
+func Test_Shutdown(t *testing.T) {
+	logs := testutil.StdoutOutputForFunc(func() {
+		metricsPort := testutil.GetFreePort(t)
+		t.Setenv("METRICS_PORT", strconv.Itoa(metricsPort))
+
+		g := New()
+
+		g.GET("/hello", func(*Context) (interface{}, error) {
+			return helloWorld, nil
+		})
+
+		go g.Run()
+		time.Sleep(10 * time.Millisecond)
+
+		err := g.Shutdown(context.Background())
+
+		require.NoError(t, err, "Test_Shutdown Failed!")
+	})
+
+	assert.Contains(t, logs, "Application shutdown complete", "Test_Shutdown Failed!")
+}
+
+func TestApp_SubscriberInitialize(t *testing.T) {
+	t.Run("subscriber is initialized", func(t *testing.T) {
+		metricsPort := testutil.GetFreePort(t)
+		t.Setenv("METRICS_PORT", strconv.Itoa(metricsPort))
+
+		app := New()
+
+		mockContainer := container.Container{
+			Logger: logging.NewLogger(logging.ERROR),
+			PubSub: mockSubscriber{},
+		}
+
+		app.container = &mockContainer
+
+		app.Subscribe("Hello", func(*Context) error {
+			// this is a test subscriber
+			return nil
+		})
+
+		_, ok := app.subscriptionManager.subscriptions["Hello"]
+
+		assert.True(t, ok)
+	})
+
+	t.Run("subscriber is not initialized", func(t *testing.T) {
+		metricsPort := testutil.GetFreePort(t)
+		t.Setenv("METRICS_PORT", strconv.Itoa(metricsPort))
+
+		app := New()
+		app.Subscribe("Hello", func(*Context) error {
+			// this is a test subscriber
+			return nil
+		})
+
+		_, ok := app.subscriptionManager.subscriptions["Hello"]
+
+		assert.False(t, ok)
+	})
+}
+
+func TestApp_Subscribe(t *testing.T) {
+	t.Run("topic is empty", func(t *testing.T) {
+		metricsPort := testutil.GetFreePort(t)
+		t.Setenv("METRICS_PORT", strconv.Itoa(metricsPort))
+
+		app := New()
+
+		mockContainer := container.Container{
+			Logger: logging.NewLogger(logging.ERROR),
+			PubSub: mockSubscriber{},
+		}
+
+		app.container = &mockContainer
+
+		app.Subscribe("", func(*Context) error { return nil })
+
+		_, ok := app.subscriptionManager.subscriptions[""]
+
+		assert.False(t, ok)
+	})
+
+	t.Run("handler is nil", func(t *testing.T) {
+		metricsPort := testutil.GetFreePort(t)
+		t.Setenv("METRICS_PORT", strconv.Itoa(metricsPort))
+
+		app := New()
+
+		mockContainer := container.Container{
+			Logger: logging.NewLogger(logging.ERROR),
+			PubSub: mockSubscriber{},
+		}
+
+		app.container = &mockContainer
+
+		app.Subscribe("Hello", nil)
+
+		_, ok := app.subscriptionManager.subscriptions["Hello"]
+
+		assert.False(t, ok)
+	})
 }

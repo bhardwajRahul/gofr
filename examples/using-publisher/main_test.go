@@ -2,17 +2,27 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gofr.dev/pkg/gofr/testutil"
 )
 
 func TestExamplePublisher(t *testing.T) {
-	const host = "http://localhost:8100"
+	httpPort := testutil.GetFreePort(t)
+	t.Setenv("HTTP_PORT", strconv.Itoa(httpPort))
+	host := fmt.Sprint("http://localhost:", httpPort)
+
+	port := testutil.GetFreePort(t)
+	t.Setenv("METRICS_PORT", strconv.Itoa(port))
+
 	go main()
-	time.Sleep(time.Second * 1)
+	time.Sleep(200 * time.Millisecond)
 
 	testCases := []struct {
 		desc               string
@@ -53,22 +63,26 @@ func TestExamplePublisher(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodPost, host+tc.path, bytes.NewBuffer(tc.body))
 		req.Header.Set("content-type", "application/json")
 		resp, err := c.Do(req)
-
-		assert.Equal(t, tc.expectedStatusCode, resp.StatusCode, "TEST[%d], Failed.\n%s", i, tc.desc)
-		assert.NoError(t, err, "TEST[%d], Failed.\n%s", i, tc.desc)
-
 		defer resp.Body.Close()
 
+		assert.Equal(t, tc.expectedStatusCode, resp.StatusCode, "TEST[%d], Failed.\n%s", i, tc.desc)
+		require.NoError(t, err, "TEST[%d], Failed.\n%s", i, tc.desc)
 	}
 }
 
 func TestExamplePublisherError(t *testing.T) {
 	t.Setenv("PUBSUB_BROKER", "localhost:1012")
-	t.Setenv("HTTP_PORT", "8200")
 
-	const host = "http://localhost:8200"
+	httpPort := testutil.GetFreePort(t)
+	t.Setenv("HTTP_PORT", strconv.Itoa(httpPort))
+
+	metricsPort := testutil.GetFreePort(t)
+	t.Setenv("METRICS_PORT", strconv.Itoa(metricsPort))
+
+	host := fmt.Sprint("http://localhost:", httpPort)
+
 	go main()
-	time.Sleep(time.Second * 1)
+	time.Sleep(200 * time.Millisecond)
 
 	testCases := []struct {
 		desc               string
@@ -99,7 +113,7 @@ func TestExamplePublisherError(t *testing.T) {
 		resp, err := c.Do(req)
 
 		assert.Equal(t, tc.expectedStatusCode, resp.StatusCode, "TEST[%d], Failed.\n%s", i, tc.desc)
-		assert.NoError(t, err, "TEST[%d], Failed.\n%s", i, tc.desc)
+		require.NoError(t, err, "TEST[%d], Failed.\n%s", i, tc.desc)
 
 		defer resp.Body.Close()
 	}
