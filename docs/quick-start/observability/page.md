@@ -7,7 +7,7 @@ GoFr by default manages observability in different ways once the server starts:
 Logs offer real-time information, providing valuable insights and immediate visibility into the ongoing state and activities of the system.
 It helps in identifying errors, debugging and troubleshooting, monitor performance, analyzing application usage, communications etc.
 
-GoFr logger allows to customize log level which provides flexibility to adjust logs based on specific needs.
+GoFr logger allows customizing log level which provides flexibility to adjust logs based on specific needs.
 
 Logs are generated only for events equal to or above the specified log level, by default GoFr logs at _INFO_ level.
 Log Level can be changed by setting the environment variable `LOG_LEVEL` value to _WARN,DEBUG,ERROR,NOTICE or FATAL_.
@@ -17,7 +17,7 @@ They contain information such as request's correlation ID, status codes, request
 
 {% figure src="/quick-start-logs.png" alt="Pretty Printed Logs" /%}
 
-Logs are well-structured, they are of type JSON when exported to a file, such that they can be pushed to logging systems such as {% new-tab-link title="Loki" href="https://grafana.com/oss/loki/" /%}, elastic search etc.
+Logs are well-structured, they are of type JSON when exported to a file, such that they can be pushed to logging systems such as {% new-tab-link title="Loki" href="https://grafana.com/oss/loki/" /%}, Elasticsearch etc.
 
 ## Metrics
 
@@ -169,7 +169,7 @@ GoFr has support for following trace-exporters:
 To see the traces install zipkin image using the following Docker command:
 
 ```bash
-  docker run --name gofr-zipkin -p 2005:9411 -d openzipkin/zipkin:latest
+docker run --name gofr-zipkin -p 2005:9411 -d openzipkin/zipkin:latest
 ```
 
 Add Tracer configs in `.env` file, your .env will be updated to
@@ -189,8 +189,8 @@ DB_PORT=3306
 
 # tracing configs
 TRACE_EXPORTER=zipkin
-TRACER_HOST=localhost
-TRACER_PORT=2005
+TRACER_URL=http://localhost:2005/api/v2/spans
+TRACER_RATIO=0.1
 
 LOG_LEVEL=DEBUG
 ```
@@ -207,11 +207,11 @@ To see the traces install jaeger image using the following Docker command:
 
 ```bash
 docker run -d --name jaeger \
-  -e COLLECTOR_OTLP_ENABLED=true \
-  -p 16686:16686 \
-  -p 14317:4317 \
-  -p 14318:4318 \
-  jaegertracing/all-in-one:1.41
+	-e COLLECTOR_OTLP_ENABLED=true \
+	-p 16686:16686 \
+	-p 14317:4317 \
+	-p 14318:4318 \
+	jaegertracing/all-in-one:1.41
 ```
 
 Add Jaeger Tracer configs in `.env` file, your .env will be updated to
@@ -220,14 +220,30 @@ Add Jaeger Tracer configs in `.env` file, your .env will be updated to
 
 # tracing configs
 TRACE_EXPORTER=jaeger
-TRACER_HOST=localhost
-TRACER_PORT=14317
+TRACER_URL=localhost:14317
+TRACER_RATIO=0.1
 ```
 
-Open {% new-tab-link title="zipkin" href="http://localhost:16686/trace/" /%} and search by TraceID (correlationID) to see the trace.
+Open {% new-tab-link title="jaeger" href="http://localhost:16686/trace/" /%} and search by TraceID (correlationID) to see the trace.
 {% figure src="/jaeger-traces.png" alt="Jaeger traces" /%}
 
-#### 3. [GoFr Tracer](https://tracer.gofr.dev/):
+#### 3. [OpenTelemetry Protocol](https://opentelemetry.io/docs/specs/otlp/):
+
+The OpenTelemetry Protocol (OTLP)  underlying gRPC is one of general-purpose telemetry data delivery protocol designed in the scope of the OpenTelemetry project.
+
+Add OTLP configs in `.env` file, your .env will be updated to
+```dotenv
+# ... no change in other env variables
+
+# tracing configs 
+TRACE_EXPORTER=otlp
+TRACER_URL=localhost:4317
+TRACER_RATIO=0.1
+```
+
+
+
+#### 4. [GoFr Tracer](https://tracer.gofr.dev/):
 
 GoFr tracer is GoFr's own custom trace exporter as well as collector. You can search a trace by its TraceID (correlationID)
 in GoFr's own tracer service available anywhere, anytime.
@@ -238,6 +254,9 @@ Add GoFr Tracer configs in `.env` file, your .env will be updated to
 
 # tracing configs
 TRACE_EXPORTER=gofr
+TRACER_RATIO=0.1
 ```
+
+> NOTE: `TRACER_RATIO` refers to the proportion of traces that are exported through sampling. It ranges between 0 and 1. By default, this ratio is set to 1, meaning all traces are exported.
 
 Open {% new-tab-link title="gofr-tracer" href="https://tracer.gofr.dev/" /%} and search by TraceID (correlationID) to see the trace.
